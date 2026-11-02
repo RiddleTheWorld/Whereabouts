@@ -80,6 +80,7 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void scrollContentsBy(int dx, int dy) override;
 
 public:
     // Scrolls the selected tile into view, if any. Public so the window can call
@@ -106,7 +107,19 @@ private:
     void rebuildMap();
     void rebuildList();
     void updateScrollRanges();
+    // Recomputes m_origin from the scrollbars, the zoom and the pan. Separate
+    // from updateScrollRanges() so a scroll can move the canvas without
+    // touching the ranges that caused the scroll.
+    void updateOrigin();
+    // Sends both bars back to the start, for when the content underneath them
+    // is replaced by something with an unrelated coordinate space.
+    void resetScroll();
     void updateHover(const QPoint &viewportPos);
+
+    // The factor between canvas coordinates and viewport pixels. The map is
+    // zoomed; the list is always drawn at 1:1, so every piece of viewport
+    // arithmetic has to ask rather than assume m_zoom.
+    qreal canvasScale() const { return m_mode == Mode::Map ? m_zoom : 1.0; }
 
     int hitTest(const QPointF &viewportPos) const;
 

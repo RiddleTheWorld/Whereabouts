@@ -84,6 +84,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/e2e.cpp")
         debugcheck:tools/debugcheck.cpp      # bugs found in the debug pass
         headershot:tools/headershot.cpp      # renders the header for inspection
         popupshot:tools/popupshot.cpp        # reproduces the sort popup
+        scrollcheck:tools/scrollcheck.cpp    # scrolling, list hit-testing, hover
     )
     foreach(entry IN LISTS CAIRN_TOOLS)
         string(REPLACE ":" ";" parts "${entry}")

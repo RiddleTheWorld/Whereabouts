@@ -15,6 +15,7 @@ rem   check.bat live       live folder updates
 rem   check.bat move       moving and renaming while open
 rem   check.bat desk       desktop icon-position polling
 rem   check.bat debug      bugs found in the debug pass
+rem   check.bat scroll     scrolling, list hit-testing, and hover
 setlocal
 
 set "QT_DIR=C:/Qt/6.12.0/mingw_64"
@@ -52,6 +53,7 @@ if "%ONLY%"=="" call :run livecheck
 if "%ONLY%"=="" call :run movecheck
 if "%ONLY%"=="" call :run deskcheck
 if "%ONLY%"=="" call :run debugcheck
+if "%ONLY%"=="" call :run scrollcheck
 if /i "%ONLY%"=="e2e"     call :run e2e
 if /i "%ONLY%"=="windows" call :run windowprobe
 if /i "%ONLY%"=="capture" call :run capturecheck
@@ -65,6 +67,7 @@ if /i "%ONLY%"=="live"  call :run livecheck
 if /i "%ONLY%"=="move"  call :run movecheck
 if /i "%ONLY%"=="desk"  call :run deskcheck
 if /i "%ONLY%"=="debug" call :run debugcheck
+if /i "%ONLY%"=="scroll" call :run scrollcheck
 
 if %FAILED% neq 0 (
   echo.

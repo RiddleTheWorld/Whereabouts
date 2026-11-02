@@ -66,6 +66,7 @@ void LayoutView::setSession(const Session &session, bool resetView)
 
     if (resetView) {
         m_userZoomed = false;
+        resetScroll();
         rebuild();
         fitToView();
     } else {
@@ -80,11 +81,15 @@ void LayoutView::setMode(Mode mode)
     if (m_mode == mode)
         return;
     m_mode = mode;
+    // The two modes do not share a coordinate space: the map scrolls in zoomed
+    // canvas pixels and the list in rows, so carrying an offset across the
+    // switch lands on an unrelated place in the new layout.
+    resetScroll();
     rebuild();
     if (m_mode == Mode::Map)
         fitToView();
     else
-        viewport()->setCursor(Qt::PointingHandCursor);
+        viewport()->setCursor(Qt::ArrowCursor);
     emit viewChanged();
 }
 
@@ -310,7 +315,6 @@ void LayoutView::rebuildList()
         viewport()->update();
         return;
     }
-    viewport()->setCursor(Qt::PointingHandCursor);
 
     QList<Entry> visible;
     for (const Entry &entry : m_session.entries) {
@@ -394,7 +398,7 @@ void LayoutView::updateScrollRanges()
         verticalScrollBar()->setPageStep(qMax(1, visible));
         verticalScrollBar()->setSingleStep(int(kListRowHeight));
         horizontalScrollBar()->setRange(0, 0);
-        m_origin = QPointF(0, -verticalScrollBar()->value());
+        updateOrigin();
         return;
     }
 
@@ -409,12 +413,48 @@ void LayoutView::updateScrollRanges()
     verticalScrollBar()->setPageStep(qMax(1, viewport()->height()));
     verticalScrollBar()->setSingleStep(24);
 
+    updateOrigin();
+}
+
+void LayoutView::resetScroll()
+{
+    // setValue() runs scrollContentsBy(), which only moves the origin; the
+    // caller rebuilds and refreshes the ranges straight after.
+    horizontalScrollBar()->setValue(0);
+    verticalScrollBar()->setValue(0);
+}
+
+void LayoutView::updateOrigin()
+{
+    if (m_mode == Mode::List) {
+        m_origin = QPointF(0, -verticalScrollBar()->value());
+        return;
+    }
+
+    const QSizeF scaled = m_canvasSize * m_zoom;
+    const int extraX = qMax(0, int(scaled.width() - viewport()->width()));
+    const int extraY = qMax(0, int(scaled.height() - viewport()->height()));
+
     // Centre the canvas until it is larger than the viewport.
     const qreal offsetX = extraX > 0 ? -horizontalScrollBar()->value()
                                      : (viewport()->width() - scaled.width()) / 2.0;
     const qreal offsetY = extraY > 0 ? -verticalScrollBar()->value()
                                      : (viewport()->height() - scaled.height()) / 2.0;
     m_origin = QPointF(offsetX, offsetY) + QPointF(m_panOffset);
+}
+
+void LayoutView::scrollContentsBy(int dx, int dy)
+{
+    Q_UNUSED(dx);
+    Q_UNUSED(dy);
+    // paintEvent draws from m_origin, not from the scrollbars, so moving a bar
+    // has to recompute it. Without this the bars carried the right range and
+    // both the wheel and the handle did nothing: the viewport repainted the
+    // same pixels, so neither the map nor the list could be scrolled at all.
+    // Only the origin is recomputed here; recomputing the ranges from inside a
+    // scroll would feed the bars back into themselves.
+    updateOrigin();
+    viewport()->update();
 }
 
 void LayoutView::fitToView()
@@ -477,13 +517,14 @@ QHash<QString, QRectF> LayoutView::tileRects() const
     // it must not be subtracted again here. Doing so moved every reported
     // rectangle by the scroll amount and made these rectangles disagree with
     // what paintEvent actually drew.
+    const qreal scale = canvasScale();
     QHash<QString, QRectF> rects;
     rects.reserve(m_tiles.size());
     for (const Tile &tile : m_tiles) {
-        const QRectF onScreen(m_origin.x() + tile.rect.x() * m_zoom,
-                              m_origin.y() + tile.rect.y() * m_zoom,
-                              tile.rect.width() * m_zoom,
-                              tile.rect.height() * m_zoom);
+        const QRectF onScreen(m_origin.x() + tile.rect.x() * scale,
+                              m_origin.y() + tile.rect.y() * scale,
+                              tile.rect.width() * scale,
+                              tile.rect.height() * scale);
         rects.insert(tile.path, onScreen);
     }
     return rects;
@@ -491,13 +532,15 @@ QHash<QString, QRectF> LayoutView::tileRects() const
 
 int LayoutView::hitTest(const QPointF &viewportPos) const
 {
-    // m_zoom is always positive in practice, but a zero here would turn every
-    // coordinate into a NaN and silently break clicking, so guard it.
-    if (m_zoom <= 0.0)
+    // The scale is always positive in practice, but a zero here would turn
+    // every coordinate into a NaN and silently break clicking, so guard it.
+    const qreal scale = canvasScale();
+    if (scale <= 0.0)
         return -1;
     // Tiles are stored in canvas space; convert the pointer instead of moving
-    // every tile on every scroll.
-    const QPointF canvasPos = (viewportPos - m_origin) / m_zoom;
+    // every tile on every scroll. In list mode the scale is 1: dividing by the
+    // map's zoom here picked a row several places below the one clicked.
+    const QPointF canvasPos = (viewportPos - m_origin) / scale;
     for (int i = 0; i < m_tiles.size(); ++i) {
         if (m_tiles.at(i).rect.contains(canvasPos))
             return i;
@@ -553,8 +596,9 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
         viewport()->update();
         return;
     }
-    if (m_mode == Mode::Map)
-        updateHover(event->pos());
+    // Both modes: the list paints a hover row as well, and leaving this to the
+    // map alone meant the list never highlighted anything under the pointer.
+    updateHover(event->pos());
 }
 
 void LayoutView::mouseReleaseEvent(QMouseEvent *event)
@@ -618,11 +662,12 @@ void LayoutView::ensureSelectionVisible()
         return;
 
     // Where the tile actually sits once scaled and offset.
+    const qreal scale = canvasScale();
     const QRectF tile = m_tiles.at(index).rect;
-    const QRectF onScreen(m_origin.x() + tile.x() * m_zoom,
-                          m_origin.y() + tile.y() * m_zoom,
-                          tile.width() * m_zoom,
-                          tile.height() * m_zoom);
+    const QRectF onScreen(m_origin.x() + tile.x() * scale,
+                          m_origin.y() + tile.y() * scale,
+                          tile.width() * scale,
+                          tile.height() * scale);
 
     if (onScreen.top() < 0)
         verticalScrollBar()->setValue(verticalScrollBar()->value()
